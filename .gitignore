@@ -1,0 +1,39 @@
+# Local environment and credentials (keep the safe setup template)
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies, production builds, and tool caches
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+.cache/
+.npm/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+.venv/
+
+# Generated test fixtures, reports, and browser authentication state
+.e2e/
+test-results/
+playwright-report/
+playwright/.auth/
+blob-report/
+coverage/
+.pytest_cache/
+
+# Logs and local editor/OS files
+*.log
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

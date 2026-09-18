@@ -1,0 +1,19 @@
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+    client_max_body_size 1024m;
+
+    location /api/ {
+        proxy_pass ${BACKEND_ORIGIN};
+        proxy_set_header Host $proxy_host;
+        proxy_set_header Authorization $http_authorization;
+        proxy_request_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
