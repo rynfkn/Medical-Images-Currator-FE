@@ -48,6 +48,14 @@ export function AnnotationInfo({
           >
             Download annotation v{current.version}
           </FileDownload>
+          {current.format === "NIFTI" && current.version > 0 && (
+            <FileDownload
+              url={`${current.url}/labels`}
+              filename={`labels-v${current.version}.json`}
+            >
+              Download label names
+            </FileDownload>
+          )}
         </>
       ) : (
         <p className="muted">

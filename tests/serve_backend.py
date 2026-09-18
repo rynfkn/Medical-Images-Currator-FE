@@ -145,6 +145,21 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
                     ds.SOPClassUID = CTImageStorage
                     ds.Modality, ds.SeriesDescription = "CT", "Generated test series"
                     ds.Rows, ds.Columns, ds.InstanceNumber = 4, 5, index + 1
+                    # Real pixels and geometry, so the viewer can render the series.
+                    ds.PixelSpacing, ds.SliceThickness = [0.8, 0.8], 2
+                    ds.ImageOrientationPatient = [1, 0, 0, 0, 1, 0]
+                    ds.ImagePositionPatient = [0, 0, index * 2]
+                    ds.RescaleSlope, ds.RescaleIntercept = 1, -1024
+                    ds.SamplesPerPixel, ds.PhotometricInterpretation = 1, "MONOCHROME2"
+                    ds.BitsAllocated, ds.BitsStored, ds.HighBit = 16, 16, 15
+                    ds.PixelRepresentation = 0
+                    ds.PixelData = bytes(
+                        bytearray(
+                            value
+                            for _ in range(ds.Rows * ds.Columns)
+                            for value in ((1024 + index * 100) % 256, (1024 + index * 100) // 256)
+                        )
+                    )
                     ds.save_as(path, enforce_file_format=True)
                 formats = ("3D", "DICOM", "NONE")
             dimension, image_format, annotation_format = formats

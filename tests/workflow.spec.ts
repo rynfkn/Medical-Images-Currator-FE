@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import type { Case, Dataset } from "../src/types/api";
+import { pairFiles } from "../src/pairing";
 
 interface Fixtures {
   username: string;
@@ -19,7 +20,7 @@ async function login(page: Page) {
   await page.getByLabel("Password").fill(fixtures().password);
   await page.getByRole("button", { name: "Log in", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Datasets", exact: true }),
+    page.getByRole("heading", { name: "Projects", exact: true }),
   ).toBeVisible();
 }
 async function openCase(page: Page, name: string) {
@@ -27,6 +28,14 @@ async function openCase(page: Page, name: string) {
   await expect(
     page.getByRole("heading", { name: "Your review" }),
   ).toBeVisible();
+}
+/** The viewer paints every format onto one canvas, so this is the common check. */
+async function expectViewer(page: Page) {
+  // The first visit decodes the volume into the slice cache, which can take a moment.
+  await expect(page.locator(".viewer-stage canvas")).toBeVisible({
+    timeout: 30000,
+  });
+  await expect(page.locator(".viewer-readout")).toContainText("Axial");
 }
 async function apiGet(page: Page, path: string) {
   const token = await page.evaluate(() =>
@@ -54,9 +63,7 @@ test("authentication, navigation, draft reuse, approval and logout", async ({
     .getByRole("link", { name: "Approved test dataset", exact: true })
     .click();
   await page.getByRole("link", { name: "Open case_0001" }).click();
-  await expect(
-    page.getByRole("heading", { name: "3D NIfTI Case" }),
-  ).toBeVisible();
+  await expectViewer(page);
   await page.getByLabel("Comment (optional)").fill("Annotation is valid.");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByRole("status")).toContainText("Draft saved.");
@@ -75,8 +82,8 @@ test("authentication, navigation, draft reuse, approval and logout", async ({
     "Review submitted successfully.",
   );
   await expect(page.locator(".case-heading .status")).toHaveText("APPROVED");
-  await page.getByRole("link", { name: "Back to cases" }).click();
-  await expect(page.locator("tbody .status")).toHaveText("APPROVED");
+  await page.getByRole("link", { name: "Back to files" }).click();
+  await expect(page.locator(".file-card .status")).toHaveText("APPROVED");
   await page.getByRole("button", { name: "Log out" }).click();
   await expect(page).toHaveURL(/\/login$/);
   expect(
@@ -98,7 +105,7 @@ test("correction upload preserves v0 and submits MODIFIED", async ({
     .getByRole("button", { name: "Submit review", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText(
-    "Please upload a corrected annotation",
+    "corrected annotation before submitting MODIFIED",
   );
   await page.getByLabel("Correction file").setInputFiles({
     name: "invalid.nii.gz",
@@ -170,13 +177,10 @@ for (const format of ["PNG", "JPEG"]) {
   }) => {
     await login(page);
     await openCase(page, format);
-    const image = page.getByRole("img", { name: "Case image_0001" });
-    await expect(image).toBeVisible();
-    expect(
-      await image.evaluate(
-        (element) => (element as HTMLImageElement).naturalWidth,
-      ),
-    ).toBe(320);
+    await expectViewer(page);
+    // A 2D raster case is a single-slice volume, so there is one plane only.
+    await expect(page.locator(".viewer-readout")).toContainText("Axial 1/1");
+    await expect(page.locator(".viewer-bar")).not.toContainText("Coronal");
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download annotation v0" }).click();
     expect((await download).suggestedFilename()).toBe("instances.json");
@@ -211,15 +215,13 @@ test("DICOM metadata, file download, and review without annotations", async ({
 }) => {
   await login(page);
   await openCase(page, "DICOM");
-  await expect(
-    page.getByRole("heading", { name: "DICOM Series" }),
-  ).toBeVisible();
+  await expectViewer(page);
   await expect(
     page.getByText("Generated test series", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("radio", { name: /MODIFIED/ })).toBeDisabled();
   await expect(page.getByLabel("Correction file")).toHaveCount(0);
-  await page.getByText("Series files (2)", { exact: true }).click();
+  await page.getByText("DICOM slices (2)", { exact: true }).click();
   const download = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "Download slice 1", exact: true })
@@ -236,7 +238,7 @@ test("another reviewer’s draft locks review and upload actions", async ({
 }) => {
   await login(page);
   await page.goto(`/cases/${fixtures().cases.Locked.id}`);
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.locator(".notice")).toContainText(
     "Another reviewer has an open draft",
   );
   await expect(
@@ -267,9 +269,7 @@ test("case layout fits a mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   await page.goto(`/cases/${fixtures().cases.Locked.id}`);
-  await expect(
-    page.getByRole("heading", { name: "3D NIfTI Case" }),
-  ).toBeVisible();
+  await expectViewer(page);
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
@@ -279,4 +279,77 @@ test("case layout fits a mobile viewport", async ({ page }) => {
     path: "test-results/case-review-mobile.png",
     fullPage: true,
   });
+});
+
+test("brush edits are saved as a new NIfTI version", async ({ page }) => {
+  await login(page);
+  await openCase(page, "Needs correction");
+  await expectViewer(page);
+  const item = fixtures().cases["Needs correction"];
+  await page.getByRole("button", { name: "Brush", exact: true }).click();
+  const stage = page.locator(".viewer-stage canvas");
+  const box = (await stage.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 12, box.y + box.height / 2 + 6);
+  await page.mouse.up();
+  await expect(page.getByText("Unsaved changes")).toBeVisible({
+    timeout: 30000,
+  });
+  await page
+    .getByRole("button", { name: "Save segmentation", exact: true })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "Segmentation saved as version v1",
+  );
+  await expect(page.getByText("Unsaved changes")).toHaveCount(0);
+  const versions = await (
+    await apiGet(page, `/cases/${item.id}/annotations`)
+  ).json();
+  expect(
+    versions.map((version: { version: number }) => version.version),
+  ).toEqual([0, 1]);
+});
+
+test("leaving with unsaved edits asks before discarding them", async ({
+  page,
+}) => {
+  await login(page);
+  await openCase(page, "Rejected");
+  await expectViewer(page);
+  await page.getByRole("button", { name: "Brush", exact: true }).click();
+  const box = (await page.locator(".viewer-stage canvas").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 10, box.y + box.height / 2);
+  await page.mouse.up();
+  await expect(page.getByText("Unsaved changes")).toBeVisible({
+    timeout: 30000,
+  });
+  await page.getByRole("link", { name: "Back to files" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("unsaved segmentation changes");
+  await expect(page).toHaveURL(/\/cases\//);
+  await dialog.getByRole("button", { name: "Discard changes" }).click();
+  await expect(page).toHaveURL(/\/datasets\//);
+  const versions = await (
+    await apiGet(page, `/cases/${fixtures().cases.Rejected.id}/annotations`)
+  ).json();
+  expect(versions).toHaveLength(1);
+});
+
+test("segmentations pair with their image by name", () => {
+  const file = (name: string) => new File(["x"], name);
+  const images = [file("case_00546.nii.gz"), file("case_00061.nii.gz")];
+  const { pairs, unmatched } = pairFiles(images, [
+    // KiTS names masks with a suffix; an exact name must still win over it.
+    file("case_00546_segmentations_v5.nii.gz"),
+    file("case_00061.nii.gz"),
+    file("case_99999.nii.gz"),
+  ]);
+  expect(pairs.map((pair) => pair.label?.name)).toEqual([
+    "case_00546_segmentations_v5.nii.gz",
+    "case_00061.nii.gz",
+  ]);
+  expect(unmatched.map((file) => file.name)).toEqual(["case_99999.nii.gz"]);
 });

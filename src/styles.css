@@ -754,3 +754,412 @@ textarea {
     transition: none !important;
   }
 }
+
+/* ---------- Dataset files ---------- */
+.files-section {
+  display: grid;
+  gap: 16px;
+}
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 16px;
+}
+.file-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+}
+.file-name {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: inherit;
+  overflow-wrap: anywhere;
+}
+.file-name strong {
+  font-size: 15px;
+}
+.file-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+/* ---------- Case topbar ---------- */
+.case-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.file-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.file-nav .button,
+.file-nav button {
+  min-width: 44px;
+  padding: 6px 10px;
+  font-size: 18px;
+  line-height: 1;
+}
+.file-position {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 62px;
+  text-align: center;
+}
+
+/* ---------- Viewer ---------- */
+.viewer {
+  padding: 16px;
+  display: grid;
+  gap: 14px;
+}
+.viewer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.viewer-bar button,
+.viewer-bar .button {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+.viewer-spacer {
+  flex: 1 1 auto;
+}
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  background: #eef3f1;
+  border-radius: 8px;
+  padding: 2px;
+}
+.segmented button {
+  border-radius: 6px;
+}
+.viewer-stage {
+  position: relative;
+  background: #06090c;
+  border-radius: 10px;
+  overflow: hidden;
+  height: min(64vh, 640px);
+  min-height: 320px;
+  touch-action: none;
+}
+.viewer-stage:focus-visible {
+  outline: 3px solid #59aa91;
+  outline-offset: 2px;
+}
+.viewer-stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+.viewer-stage.tool-brush canvas,
+.viewer-stage.tool-eraser canvas {
+  cursor: crosshair;
+}
+.viewer-badge {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(6, 9, 12, 0.72);
+  color: #e8f1ee;
+  font-size: 12px;
+}
+.viewer-badge.unsaved {
+  left: auto;
+  right: 12px;
+  background: #b8730f;
+  color: white;
+  font-weight: 600;
+}
+.viewer-badge.error {
+  background: #a02020;
+  color: white;
+  max-width: 70%;
+}
+.viewer-readout {
+  position: absolute;
+  bottom: 10px;
+  left: 12px;
+  margin: 0;
+  color: #cfe0da;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px #000;
+}
+.viewer-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px 20px;
+  /* A tall control (the label editor) must not stretch its neighbours' rows. */
+  align-items: start;
+}
+.control {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  font-size: 13px;
+}
+.control > span {
+  color: var(--muted);
+}
+.control input[type="range"] {
+  width: 100%;
+  accent-color: var(--green);
+  min-height: 28px;
+}
+.slice-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.slice-row button {
+  min-width: 40px;
+  min-height: 34px;
+  padding: 2px 8px;
+  font-size: 18px;
+  line-height: 1;
+}
+.slice-row input {
+  flex: 1 1 auto;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  gap: 6px;
+}
+.chip {
+  flex: 0 0 auto;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: white;
+  color: #36564e;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chip:hover {
+  background: #edf3ef;
+}
+.chip.on {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.viewer-hint {
+  margin: 0;
+}
+
+.window-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.window-row span {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+.window-row input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-variant-numeric: tabular-nums;
+}
+.label-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f7faf8;
+}
+.label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.label-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  min-width: 18px;
+  font-size: 12px;
+}
+.label-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+.label-editor p {
+  margin: 0;
+}
+
+/* ---------- Unsaved-changes dialog ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 24, 21, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 20;
+}
+.modal {
+  max-width: 460px;
+  width: 100%;
+}
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* Give the viewer the full width as soon as the side panel would squeeze it. */
+@media (max-width: 1000px) {
+  .case-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .viewer-stage {
+    height: min(52vh, 420px);
+    min-height: 260px;
+  }
+  .viewer {
+    padding: 12px;
+  }
+  .viewer-controls {
+    grid-template-columns: 1fr;
+  }
+  .file-grid {
+    grid-template-columns: 1fr;
+  }
+  .case-topbar {
+    align-items: flex-start;
+  }
+  .modal-actions button {
+    flex: 1 1 100%;
+  }
+}
+
+/* ---------- Project and upload forms ---------- */
+.pairing {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  max-height: 190px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f7faf8;
+  font-size: 13px;
+}
+.pairing strong {
+  overflow-wrap: anywhere;
+}
+.pairing small {
+  margin-top: 2px;
+}
+.page-heading.with-action {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.page-heading.with-action > div {
+  min-width: 0;
+}
+.inline-form {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+  margin-bottom: 24px;
+}
+.inline-form h2 {
+  margin-bottom: 4px;
+}
+.inline-form input,
+.inline-form select {
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: white;
+  width: 100%;
+}
+.inline-form input[type="file"] {
+  padding: 8px;
+}
+.inline-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.inline-form p {
+  margin: 0;
+}
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 4px;
+}
+.section-heading .inline-form {
+  flex-basis: 100%;
+}
+
+@media (max-width: 760px) {
+  .inline-form {
+    max-width: none;
+  }
+  .form-actions button {
+    flex: 1 1 140px;
+  }
+}

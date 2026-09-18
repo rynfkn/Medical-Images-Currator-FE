@@ -83,8 +83,11 @@ export default function App() {
             )
           }
         >
-          <Route path="/datasets" element={<DatasetListPage />} />
-          <Route path="/datasets/:datasetId" element={<DatasetPage />} />
+          <Route path="/datasets" element={<DatasetListPage user={user} />} />
+          <Route
+            path="/datasets/:datasetId"
+            element={<DatasetPage user={user} />}
+          />
           <Route
             path="/cases/:caseId"
             element={user ? <CaseReviewPage user={user} /> : null}

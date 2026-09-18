@@ -1,18 +1,33 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import { AnnotationInfo } from "../components/AnnotationInfo";
+import { CaseFiles } from "../components/CaseFiles";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ReviewPanel } from "../components/ReviewPanel";
-import { SimpleViewer } from "../components/SimpleViewer";
 import { StatusBadge } from "../components/StatusBadge";
-import type { Annotation, Case, Decision, Review, User } from "../types/api";
+import { Viewer } from "../components/Viewer";
+import type {
+  Annotation,
+  Case,
+  CaseSummary,
+  Decision,
+  Review,
+  User,
+  ViewerInfo,
+} from "../types/api";
 
 interface CaseData {
   item: Case;
   current: Annotation | null;
   history: Annotation[];
   reviews: Review[];
+}
+
+interface Guard {
+  href: string | null;
+  title: string;
 }
 
 async function loadCase(caseId: string): Promise<CaseData> {
@@ -69,13 +84,37 @@ function openCase(caseId: string, userId: string): Promise<CaseData> {
   return request;
 }
 
+// One ordered case list per dataset is enough for previous/next navigation.
+const indexes = new Map<string, Promise<CaseSummary[]>>();
+function caseIndex(datasetId: string): Promise<CaseSummary[]> {
+  const cached = indexes.get(datasetId);
+  if (cached) return cached;
+  const request = api
+    .get<CaseSummary[]>(`/datasets/${datasetId}/cases/index`)
+    .then(({ data }) => data)
+    .catch(() => {
+      indexes.delete(datasetId);
+      return [] as CaseSummary[];
+    });
+  indexes.set(datasetId, request);
+  return request;
+}
+
 export function CaseReviewPage({ user }: { user: User }) {
   const { caseId } = useParams();
   return <CaseWorkspace key={caseId} caseId={caseId!} user={user} />;
 }
 
 function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
+  const navigate = useNavigate();
+  const location = useLocation();
   const [data, setData] = useState<CaseData | null>(null);
+  const [viewer, setViewer] = useState<ViewerInfo | null>(null);
+  const [viewerError, setViewerError] = useState("");
+  const [viewerVersion, setViewerVersion] = useState(0);
+  const [siblings, setSiblings] = useState<CaseSummary[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const [guard, setGuard] = useState<Guard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -83,31 +122,35 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
   const [decision, setDecision] = useState<Decision>("APPROVED");
   const [comment, setComment] = useState("");
   const [operation, setOperation] = useState<
-    "upload" | "save" | "submit" | null
+    "upload" | "save" | "submit" | "mask" | "discard" | null
   >(null);
   const draft = data?.reviews.find((review) => !review.submitted_at);
   const ownDraft = draft?.reviewer_id === user.id;
   const busy = operation !== null;
+
   function applyDraft(next: CaseData) {
-    const draft = next.reviews.find(
+    const own = next.reviews.find(
       (review) => !review.submitted_at && review.reviewer_id === user.id,
     );
-    setDecision(draft?.decision || "APPROVED");
-    setComment(draft?.comment || "");
+    setDecision(own?.decision || "APPROVED");
+    setComment(own?.comment || "");
   }
+
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
     openCase(caseId, user.id)
       .then((next) => {
-        if (active) {
-          setData(next);
-          applyDraft(next);
-        }
+        if (!active) return;
+        setData(next);
+        applyDraft(next);
+        void caseIndex(next.item.dataset_id).then(
+          (list) => active && setSiblings(list),
+        );
       })
-      .catch((error: unknown) => {
-        if (active) setError(errorMessage(error, "Failed to load case."));
+      .catch((cause: unknown) => {
+        if (active) setError(errorMessage(cause, "Failed to load case."));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -116,6 +159,109 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
       active = false;
     };
   }, [caseId, user.id, retry]);
+
+  useEffect(() => {
+    let active = true;
+    setViewerError("");
+    api
+      .get<ViewerInfo>(`/viewer/cases/${caseId}`)
+      .then(({ data: info }) => {
+        if (!active) return;
+        setViewer(info);
+        setDirty(info.has_draft);
+      })
+      .catch((cause: unknown) => {
+        if (active)
+          setViewerError(
+            errorMessage(cause, "Failed to prepare the image viewer."),
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [caseId, retry]);
+
+  // Unsaved segmentation edits live on the server, but never leave without asking.
+  useEffect(() => {
+    if (!dirty) return;
+    const onClick = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0) return;
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+        return;
+      const anchor = (event.target as HTMLElement | null)?.closest?.("a");
+      const href = anchor?.getAttribute("href");
+      if (!anchor || anchor.target === "_blank" || !href) return;
+      if (!href.startsWith("/") || href === location.pathname) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setGuard({ href, title: "You have unsaved segmentation changes." });
+    };
+    const onUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    document.addEventListener("click", onClick, true);
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("beforeunload", onUnload);
+    };
+  }, [dirty, location.pathname]);
+
+  async function refreshViewer() {
+    const { data: info } = await api.get<ViewerInfo>(`/viewer/cases/${caseId}`);
+    setViewer(info);
+    setDirty(info.has_draft);
+    setViewerVersion((value) => value + 1);
+  }
+
+  async function saveSegmentation(): Promise<boolean> {
+    if (busy) return false;
+    setOperation("mask");
+    setError("");
+    setMessage("");
+    try {
+      const { data: annotation } = await api.post<Annotation>(
+        `/viewer/cases/${caseId}/save`,
+      );
+      setMessage(`Segmentation saved as version v${annotation.version}.`);
+      setData(await loadCase(caseId));
+      await refreshViewer();
+      return true;
+    } catch (cause) {
+      setError(errorMessage(cause, "Failed to save the segmentation."));
+      return false;
+    } finally {
+      setOperation(null);
+    }
+  }
+
+  async function discardSegmentation(): Promise<boolean> {
+    if (busy) return false;
+    setOperation("discard");
+    setError("");
+    setMessage("");
+    try {
+      await api.post(`/viewer/cases/${caseId}/discard`);
+      await refreshViewer();
+      setMessage("Unsaved segmentation changes discarded.");
+      return true;
+    } catch (cause) {
+      setError(errorMessage(cause, "Failed to discard the changes."));
+      return false;
+    } finally {
+      setOperation(null);
+    }
+  }
+
+  async function resolveGuard(action: "save" | "discard" | "stay") {
+    const target = guard?.href;
+    if (action === "stay") return setGuard(null);
+    const done =
+      action === "save"
+        ? await saveSegmentation()
+        : await discardSegmentation();
+    if (!done) return;
+    setGuard(null);
+    if (target) navigate(target);
+  }
 
   async function upload(file: File): Promise<boolean> {
     if (!ownDraft || busy) return false;
@@ -131,34 +277,16 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
         body,
       );
       uploaded = true;
-      // Reflect committed uploads even if the subsequent refresh fails.
-      setData(
-        (previous) =>
-          previous && {
-            ...previous,
-            current: annotation,
-            history: [...previous.history, annotation],
-            item: {
-              ...previous.item,
-              status: "IN_REVIEW",
-              current_annotation: annotation,
-            },
-            reviews: previous.reviews.map((review) =>
-              review.id === draft?.id
-                ? { ...review, annotation_version_id: annotation.id }
-                : review,
-            ),
-          },
-      );
       setMessage(
         `Correction uploaded successfully. Current annotation: v${annotation.version}.`,
       );
       setData(await loadCase(caseId));
-    } catch (error) {
+      await refreshViewer();
+    } catch (cause) {
       setError(
         uploaded
           ? "Correction uploaded, but refreshing the case failed. Reload to verify it before uploading again."
-          : errorMessage(error, "Failed to upload correction."),
+          : errorMessage(cause, "Failed to upload correction."),
       );
     } finally {
       setOperation(null);
@@ -178,8 +306,15 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
         data.current.created_by !== user.id)
     ) {
       setError(
-        "Please upload a corrected annotation before submitting MODIFIED. The correction must be uploaded by you.",
+        "Please save or upload a corrected annotation before submitting MODIFIED. The correction must be made by you.",
       );
+      return;
+    }
+    if (submit && dirty) {
+      setGuard({
+        href: null,
+        title: "Save the segmentation before submitting the review.",
+      });
       return;
     }
     setOperation(submit ? "submit" : "save");
@@ -200,29 +335,17 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
           },
       );
       if (submit) {
-        const { data: result } = await api.post<Review>(
-          `/reviews/${saved.id}/submit`,
-        );
+        await api.post<Review>(`/reviews/${saved.id}/submit`);
         submitted = true;
-        setData(
-          (previous) =>
-            previous && {
-              ...previous,
-              item: { ...previous.item, status: result.decision },
-              reviews: previous.reviews.map((review) =>
-                review.id === result.id ? result : review,
-              ),
-            },
-        );
         setMessage("Review submitted successfully.");
         setData(await loadCase(caseId));
       } else setMessage("Draft saved.");
-    } catch (error) {
+    } catch (cause) {
       setError(
         submitted
           ? "Review submitted, but refreshing the case failed. Reload to see the latest case information."
           : errorMessage(
-              error,
+              cause,
               submit ? "Failed to submit review." : "Failed to save draft.",
             ),
       );
@@ -243,14 +366,55 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
       </>
     );
   const { item, current, history, reviews } = data;
+  const position = siblings.findIndex((entry) => entry.id === item.id);
+  const previous = position > 0 ? siblings[position - 1] : null;
+  const next =
+    position >= 0 && position < siblings.length - 1
+      ? siblings[position + 1]
+      : null;
+  const canEdit = Boolean(viewer?.editable) && Boolean(ownDraft);
+
   return (
     <>
-      <Link className="back-link" to={`/datasets/${item.dataset_id}`}>
-        ← Back to cases
-      </Link>
+      <div className="case-topbar">
+        <Link className="back-link" to={`/datasets/${item.dataset_id}`}>
+          ← Back to files
+        </Link>
+        <nav className="file-nav" aria-label="Files in this dataset">
+          {previous ? (
+            <Link
+              className="button secondary"
+              to={`/cases/${previous.id}`}
+              aria-label="Previous file"
+            >
+              ‹
+            </Link>
+          ) : (
+            <button className="secondary" disabled aria-label="Previous file">
+              ‹
+            </button>
+          )}
+          <span className="file-position">
+            {position >= 0 ? `${position + 1}/${siblings.length}` : "—"}
+          </span>
+          {next ? (
+            <Link
+              className="button secondary"
+              to={`/cases/${next.id}`}
+              aria-label="Next file"
+            >
+              ›
+            </Link>
+          ) : (
+            <button className="secondary" disabled aria-label="Next file">
+              ›
+            </button>
+          )}
+        </nav>
+      </div>
       <div className="page-heading case-heading">
         <div>
-          <p className="eyebrow">Case review</p>
+          <p className="eyebrow">File review</p>
           <h1>{item.case_uid}</h1>
           <p className="muted">
             {item.dimension} · {item.image_format} image ·{" "}
@@ -277,7 +441,42 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
       )}
       <div className="case-layout">
         <div className="case-content">
-          <SimpleViewer item={item} />
+          {viewerError ? (
+            <section className="panel">
+              <h2>Image viewer</h2>
+              <p className="error" role="alert">
+                {viewerError}
+              </p>
+              <button className="secondary" onClick={() => setRetry(retry + 1)}>
+                Try again
+              </button>
+            </section>
+          ) : viewer ? (
+            <ErrorBoundary title="Image viewer">
+              <Viewer
+                caseId={caseId}
+                info={viewer}
+                canEdit={canEdit}
+                dirty={dirty}
+                busy={busy}
+                version={viewerVersion}
+                onDirty={() => setDirty(true)}
+                onSave={() => void saveSegmentation()}
+                onDiscard={() =>
+                  setGuard({
+                    href: null,
+                    title: "Discard your unsaved segmentation changes?",
+                  })
+                }
+              />
+            </ErrorBoundary>
+          ) : (
+            <section className="panel">
+              <h2>Image viewer</h2>
+              {/* Not role="status": the page already announces its own loading state. */}
+              <p className="muted">Preparing the volume for viewing…</p>
+            </section>
+          )}
           <AnnotationInfo
             current={current}
             history={history}
@@ -286,19 +485,7 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
             uploading={operation === "upload"}
             onUpload={upload}
           />
-          <details className="panel">
-            <summary>Case information</summary>
-            <dl className="debug-info">
-              <dt>Case ID</dt>
-              <dd>{item.id}</dd>
-              <dt>Dataset ID</dt>
-              <dd>{item.dataset_id}</dd>
-              <dt>Current annotation</dt>
-              <dd>
-                {current ? `v${current.version} · ${current.id}` : "None"}
-              </dd>
-            </dl>
-          </details>
+          <CaseFiles item={item} />
         </div>
         <aside>
           {draft && ownDraft ? (
@@ -364,6 +551,42 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
           </section>
         </aside>
       </div>
+      {guard && (
+        <div
+          className="modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Unsaved changes"
+        >
+          <div className="modal panel">
+            <h2>{guard.title}</h2>
+            <p className="muted">
+              Your brush edits are kept as a private draft. Save them as a new
+              annotation version, or discard them to return to the stored
+              segmentation.
+            </p>
+            <div className="modal-actions">
+              <button disabled={busy} onClick={() => void resolveGuard("save")}>
+                {operation === "mask" ? "Saving…" : "Save changes"}
+              </button>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => void resolveGuard("discard")}
+              >
+                {operation === "discard" ? "Discarding…" : "Discard changes"}
+              </button>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() => void resolveGuard("stay")}
+              >
+                Keep editing
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

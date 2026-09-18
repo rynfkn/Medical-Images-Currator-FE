@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import { Pagination, PAGE_SIZE } from "../components/Pagination";
-import type { Dataset } from "../types/api";
+import { NewProjectForm } from "../components/ProjectForms";
+import type { Dataset, User } from "../types/api";
 
-export function DatasetListPage() {
+export function DatasetListPage({ user }: { user: User | null }) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -31,10 +32,17 @@ export function DatasetListPage() {
   }, [offset, retry]);
   return (
     <>
-      <div className="page-heading">
-        <p className="eyebrow">Dataset library</p>
-        <h1>Datasets</h1>
-        <p className="muted">Choose a dataset to start reviewing its cases.</p>
+      <div className="page-heading with-action">
+        <div>
+          <p className="eyebrow">Workspace</p>
+          <h1>Projects</h1>
+          <p className="muted">
+            Open a project to see its files, or create one and upload data.
+          </p>
+        </div>
+        {user?.role === "ADMIN" && (
+          <NewProjectForm onCreated={() => setRetry((value) => value + 1)} />
+        )}
       </div>
       {loading ? (
         <p role="status">Loading datasets…</p>
@@ -49,7 +57,9 @@ export function DatasetListPage() {
         <>
           {!datasets.length && (
             <div className="empty panel">
-              No datasets found. Ask an administrator to import a dataset.
+              {user?.role === "ADMIN"
+                ? "No projects yet. Use “New project” above, then add files to it."
+                : "No projects found. Ask an administrator to create one."}
             </div>
           )}
           <div className="dataset-grid">
@@ -78,7 +88,7 @@ export function DatasetListPage() {
                   className="button secondary"
                   to={`/datasets/${dataset.id}`}
                 >
-                  Open dataset <span aria-hidden="true">→</span>
+                  Open project <span aria-hidden="true">→</span>
                 </Link>
               </article>
             ))}

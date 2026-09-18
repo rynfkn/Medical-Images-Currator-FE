@@ -1,6 +1,6 @@
 # Medical Dataset Curator frontend
 
-A small React + TypeScript integration MVP for the existing FastAPI backend. All frontend source, dependencies, configuration, and build output stay in this directory.
+A React + TypeScript workspace for the existing FastAPI backend: a dataset/file browser, a medical image viewer with brush-based segmentation editing, and the review workflow. All frontend source, dependencies, configuration, and build output stay in this directory. The viewer is plain canvas — no imaging library is pulled in.
 
 ## Run locally
 
@@ -27,25 +27,56 @@ npm run format:check
 
 Build output is in `frontend/dist`. Production hosting must serve `index.html` for client-side routes and proxy `/api` to the backend, or use a directly configured API base URL at build time.
 
+## Projects and files
+
+Administrators see **New project** on `/datasets` and **Add files** inside a project.
+Creating a project picks one of the backend's supported format combinations by
+name ("NIfTI volumes", "DICOM series, segmentable", "PNG images + COCO", …), and
+adding files uploads them straight from the browser — no server-side paths. For
+NIfTI, segmentations are optional and matched to their image by file name, so a
+project can be filled with images alone and segmented later in the viewer.
+Reviewers see the projects and files but not these actions.
+
+## Viewing and annotating
+
+The `/cases/:caseId` page is the workspace. Images are never downloaded whole: the
+viewer asks the backend for one windowed PNG slice at a time, so a 300-slice CT opens
+as fast as a thumbnail.
+
+- **Planes.** Axial, coronal, and sagittal, each drawn with its own millimetre spacing so anisotropic volumes keep their proportions. 2D images (PNG/JPEG) are shown as a single-slice volume.
+- **Mouse.** Wheel moves through slices, Ctrl+wheel or pinch zooms, the right button drags window/level, the middle button or the Navigate tool pans. Arrow keys step slices; `b`, `e`, `v` pick brush, eraser, navigate; `[` and `]` size the brush; Ctrl+Z undoes the last stroke on the current slice.
+- **Windowing.** Presets (soft tissue, lung, bone, brain, auto) plus numeric WW/WL fields for exact Hounsfield values. Volumes that look like CT open on a soft-tissue window instead of a percentile stretch.
+- **Brush.** Paint and erase the segmentation directly. Each stroke is sent to the reviewer's server-side working copy, so edits show up in every plane and survive a reload, and no annotation version is created until **Save segmentation**.
+- **Labels.** Label values can be named (`1` → `Kidney`), renamed, and extended. Names are saved with the case and written beside the mask as `labels.json`, since a NIfTI mask stores numbers only.
+- **Leaving with unsaved edits.** Any in-app link, the previous/next file arrows, and a browser reload ask first, offering save, discard, or keep editing. Nothing is discarded silently.
+- **Files.** `‹` and `›` step through the dataset with an `n/total` indicator, and the dataset page shows each file as a card.
+- **Export.** The current annotation and its label names download from the case page, in the case's own format: NIfTI in, NIfTI out.
+
+Decoded slices are cached in the browser (64 of them) and the next eight in the
+direction of travel are prefetched, so wheel scrolling normally issues no request at
+all. Images are drawn with linear interpolation, which is what keeps a thick-slice
+coronal or sagittal view readable; label overlays stay nearest-neighbour so colours
+are never blended into classes that do not exist.
+
 ## Workflow and API compatibility
 
 The four pages are `/login`, `/datasets`, `/datasets/:datasetId`, and `/cases/:caseId`.
 
 - Login uses OAuth2 form encoding, stores the JWT in localStorage, and verifies `/auth/me`. API 401 responses clear the session and return to login.
 - Dataset and case lists use the backend's `limit` / `offset` pagination.
-- PNG/JPEG images and all downloads are fetched with bearer authentication. Blob URLs allow images to render without exposing tokens in URLs. NIfTI and DICOM show metadata and downloadable files only.
+- Images, slices, and downloads are fetched with bearer authentication; nothing is addressed by a token-bearing URL.
 - Opening a case creates an `APPROVED` draft or reuses the existing draft. Another reviewer's open draft locks correction and review actions. Saving a draft preserves the chosen decision and comment. Opening a previously submitted case starts a new review, as requested by the MVP workflow.
 - Corrections use multipart `file` uploads. The current annotation, version history, draft reference, and case status refresh after upload. The backend preserves v0 and validates NIfTI/COCO contents.
 - `MODIFIED` requires a current correction uploaded by the signed-in reviewer. DICOM cases support the other three decisions and have no correction upload.
 - Submission saves the form to the same draft and then submits it. Success refreshes the case status and review history. Unsaved form edits are not persisted when leaving the page; use **Save draft** first.
 
-**Small backend compatibility change:** the original API could create and submit drafts but could not update their decision/comment. `PATCH /api/v1/reviews/{review_id}` accepts the existing `ReviewCreate` JSON schema, checks ownership and immutability, and targets the current annotation. CORS now allows PATCH. Restart the backend with these changes before running the frontend. No database migration is needed.
+The backend exposes `PATCH /api/v1/reviews/{review_id}` for saving an open draft's decision and comment, and the `/api/v1/viewer/...` endpoints the viewer reads and writes. No database migration is needed.
 
-File downloads are buffered in browser memory for this MVP. Large medical volumes may require a streaming download approach later. Medical image editing and segmentation visualization are intentionally outside this implementation.
+File downloads are buffered in browser memory, so exporting a very large mask is limited by available memory; viewing is not, because slices are fetched individually.
 
 ## Browser integration tests
 
-The Playwright suite starts the actual FastAPI application and Vite, generates synthetic NIfTI/PNG/JPEG/DICOM files, creates isolated test users, and runs real HTTP requests. It covers login/logout/session expiry, navigation, draft reuse, all four decisions, reviewer locking, protected files, NIfTI and COCO corrections, preservation of the original v0 bytes, and mobile layout.
+The Playwright suite starts the actual FastAPI application and Vite, generates synthetic NIfTI/PNG/JPEG/DICOM files, creates isolated test users, and runs real HTTP requests. It covers login/logout/session expiry, navigation, draft reuse, all four decisions, reviewer locking, protected files, NIfTI and COCO corrections, preservation of the original v0 bytes, mobile layout, painting a mask and saving it as a new version, and the prompt shown when leaving with unsaved edits.
 
 Install backend test dependencies in a Python 3.12+ environment using `pip install -e '../backend[test]'`, then run from `frontend`:
 
