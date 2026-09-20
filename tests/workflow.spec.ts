@@ -36,6 +36,10 @@ async function expectViewer(page: Page) {
     timeout: 30000,
   });
   await expect(page.locator(".viewer-readout")).toContainText("Axial");
+  await expect(
+    page.locator(".viewer-badge").filter({ hasText: "Loading" }),
+  ).toHaveCount(0);
+  await expect(page.locator(".viewer-stage [role=alert]")).toHaveCount(0);
 }
 async function apiGet(page: Page, path: string) {
   const token = await page.evaluate(() =>
@@ -181,6 +185,26 @@ for (const format of ["PNG", "JPEG"]) {
     // A 2D raster case is a single-slice volume, so there is one plane only.
     await expect(page.locator(".viewer-readout")).toContainText("Axial 1/1");
     await expect(page.locator(".viewer-bar")).not.toContainText("Coronal");
+    // The canvas must actually contain the overlay, not just exist while requests fail.
+    const centerPixel = () =>
+      page.locator(".viewer-stage canvas").evaluate((node) => {
+        const canvas = node as HTMLCanvasElement;
+        return [
+          ...canvas
+            .getContext("2d")!
+            .getImageData(
+              Math.floor(canvas.width / 2),
+              Math.floor(canvas.height / 2),
+              1,
+              1,
+            ).data,
+        ];
+      });
+    const withMask = await centerPixel();
+    await page.getByRole("button", { name: "Visible", exact: true }).click();
+    await expect.poll(centerPixel).not.toEqual(withMask);
+    await page.getByRole("button", { name: "Hidden", exact: true }).click();
+    await expect.poll(centerPixel).toEqual(withMask);
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download annotation v0" }).click();
     expect((await download).suggestedFilename()).toBe("instances.json");
@@ -209,6 +233,28 @@ for (const format of ["PNG", "JPEG"]) {
       });
   });
 }
+
+test("HTML from a misconfigured API shows a useful login error", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/auth/login", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><html><body>Frontend fallback</body></html>",
+    }),
+  );
+  await page.goto("/login");
+  await page.getByLabel("Username").fill(fixtures().username);
+  await page.getByLabel("Password").fill(fixtures().password);
+  await page.getByRole("button", { name: "Log in", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "web page instead of API data",
+  );
+  expect(
+    await page.evaluate(() => localStorage.getItem("medical-curator-token")),
+  ).toBeNull();
+});
 
 test("DICOM metadata, file download, and review without annotations", async ({
   page,

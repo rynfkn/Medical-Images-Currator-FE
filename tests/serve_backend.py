@@ -17,9 +17,7 @@ sys.path.insert(0, str(backend))
 with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
     root = Path(temporary)
     os.environ["JWT_SECRET"] = "frontend-test-only-secret-at-least-32-characters"
-    os.environ["DATABASE_URL"] = os.environ.get(
-        "E2E_DATABASE_URL", f"sqlite:///{root / 'test.db'}"
-    )
+    os.environ["DATABASE_URL"] = os.environ.get("E2E_DATABASE_URL", f"sqlite:///{root / 'test.db'}")
     if os.environ.get("E2E_DATABASE_URL"):
         from sqlalchemy import create_engine, text
         from sqlalchemy.engine import make_url
@@ -48,6 +46,7 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
     import uvicorn
     from fastapi.testclient import TestClient
     from PIL import Image, ImageDraw
+    from pycocotools import mask as coco_mask
     from pydicom.dataset import FileDataset, FileMetaDataset
     from pydicom.uid import CTImageStorage, ExplicitVRLittleEndian, generate_uid
 
@@ -114,17 +113,29 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
                 filename = f"image_0001.{suffix}"
                 image = Image.new("RGB", (320, 240), "#182b28")
                 draw = ImageDraw.Draw(image)
-                draw.ellipse(
-                    (75, 30, 245, 210), fill="#78918b", outline="#e4ece8", width=3
-                )
+                draw.ellipse((75, 30, 245, 210), fill="#78918b", outline="#e4ece8", width=3)
                 draw.ellipse((115, 70, 205, 170), fill="#c1d1ca")
                 image.save(source / "images" / filename)
+                # Real masks exercise both category remapping and compressed RLE.
+                category_id = 0 if name == "PNG" else 300
+                segmentation = [[100, 70, 220, 70, 220, 170, 100, 170]]
+                if name == "JPEG":
+                    mask = np.zeros((240, 320), dtype=np.uint8, order="F")
+                    mask[70:170, 100:220] = 1
+                    segmentation = coco_mask.encode(mask)
+                    segmentation["counts"] = segmentation["counts"].decode("ascii")
                 document = {
-                    "images": [
-                        {"id": 1, "file_name": filename, "width": 320, "height": 240}
+                    "images": [{"id": 1, "file_name": filename, "width": 320, "height": 240}],
+                    "annotations": [
+                        {
+                            "id": 1,
+                            "image_id": 1,
+                            "category_id": category_id,
+                            "segmentation": segmentation,
+                            "iscrowd": 0,
+                        }
                     ],
-                    "annotations": [],
-                    "categories": [{"id": 1, "name": "test-region"}],
+                    "categories": [{"id": category_id, "name": "test-region"}],
                 }
                 (source / "annotations/instances.json").write_text(json.dumps(document))
                 formats = ("2D", name, "COCO")
@@ -137,9 +148,7 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
                     meta.TransferSyntaxUID = ExplicitVRLittleEndian
                     meta.MediaStorageSOPClassUID = CTImageStorage
                     meta.MediaStorageSOPInstanceUID = generate_uid()
-                    ds = FileDataset(
-                        str(path), {}, file_meta=meta, preamble=b"\0" * 128
-                    )
+                    ds = FileDataset(str(path), {}, file_meta=meta, preamble=b"\0" * 128)
                     ds.StudyInstanceUID, ds.SeriesInstanceUID = study, series
                     ds.SOPInstanceUID = meta.MediaStorageSOPInstanceUID
                     ds.SOPClassUID = CTImageStorage
@@ -181,9 +190,7 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
                 json={"type": kind, "path": str(source)},
             )
             assert result.status_code == 201, result.text
-            case = client.get(
-                f"/api/v1/datasets/{dataset['id']}/cases", headers=headers
-            ).json()[0]
+            case = client.get(f"/api/v1/datasets/{dataset['id']}/cases", headers=headers).json()[0]
             manifest["datasets"][name] = dataset
             manifest["cases"][name] = case
         other_token = client.post(
@@ -197,9 +204,7 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
         ).raise_for_status()
 
     correction = root / "corrected.nii.gz"
-    nib.save(
-        nib.Nifti1Image(np.full((4, 5, 6), 2, dtype=np.int16), np.eye(4)), correction
-    )
+    nib.save(nib.Nifti1Image(np.full((4, 5, 6), 2, dtype=np.int16), np.eye(4)), correction)
     manifest["correction"] = str(correction)
     (frontend / ".e2e").mkdir(exist_ok=True)
     (frontend / ".e2e/fixtures.json").write_text(json.dumps(manifest))

@@ -8,7 +8,10 @@ export const setToken = (token: string) =>
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
 export const api = axios.create({
-  baseURL: (import.meta.env.VITE_API_BASE_URL || "/api/v1").replace(/\/$/, ""),
+  baseURL: (import.meta.env.VITE_API_BASE_URL?.trim() || "/api/v1").replace(
+    /\/+$/,
+    "",
+  ),
 });
 
 api.interceptors.request.use((config) => {
@@ -17,7 +20,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // A SPA rewrite or tunnel interstitial can return HTTP 200 with HTML.
+    if (String(response.headers["content-type"]).includes("text/html"))
+      throw new axios.AxiosError(
+        "The API returned HTML instead of data.",
+        "ERR_API_HTML",
+        response.config,
+        response.request,
+        response,
+      );
+    return response;
+  },
   (error: unknown) => {
     if (axios.isAxiosError(error) && error.response?.status === 401) {
       clearToken();
@@ -29,6 +43,8 @@ api.interceptors.response.use(
 
 export function errorMessage(error: unknown, fallback: string): string {
   if (!axios.isAxiosError(error)) return fallback;
+  if (error.code === "ERR_API_HTML")
+    return "The server returned a web page instead of API data. Please contact the deployment administrator.";
   const detail: unknown = error.response?.data?.detail;
   // Never render server HTML, tracebacks, or unstructured error bodies.
   if (

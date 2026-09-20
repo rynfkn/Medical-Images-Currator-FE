@@ -27,6 +27,62 @@ npm run format:check
 
 Build output is in `frontend/dist`. Production hosting must serve `index.html` for client-side routes and proxy `/api` to the backend, or use a directly configured API base URL at build time.
 
+## Deploy on Vercel with a separate backend
+
+Set the Vercel project's **Root Directory** to `frontend`, framework to **Vite**,
+build command to `npm run build`, and output directory to `dist`. In **Settings →
+Environment Variables**, set this for each environment you deploy (Production or Preview):
+
+```dotenv
+VITE_API_BASE_URL=https://YOUR-PUBLIC-BACKEND/api/v1
+```
+
+Use your backend's public HTTPS domain, including `/api/v1`, then **redeploy**.
+Vite embeds this value during the build. `API_PROXY_TARGET` only works in local
+development/preview; Vercel does not run that proxy. The supplied `vercel.json`
+serves the SPA, so `/api/v1` on the Vercel domain returns HTML instead of API JSON.
+Vercel builds now reject a missing, relative, or non-HTTPS API URL.
+
+On the backend, add the exact frontend origin to its environment, without a path
+or trailing slash. Keep any local origins you still use:
+
+```dotenv
+CORS_ORIGINS=["https://medical-images-currator.vercel.app","http://localhost:5173"]
+```
+
+From `backend/`, apply the environment and backend code changes:
+
+```bash
+docker compose up -d --build --force-recreate backend
+```
+
+`docker compose restart` alone does not apply changed Compose environment values.
+For a deployment outside Compose, update the running service's environment and
+restart/redeploy it. The browser accesses the backend API; only the backend
+connects to PostgreSQL. Database credentials do not belong in Vercel's `VITE_*`
+variables.
+
+Check the tunnel and browser preflight without credentials:
+
+```bash
+curl -i https://YOUR-PUBLIC-BACKEND/openapi.json
+curl -i -X OPTIONS https://YOUR-PUBLIC-BACKEND/api/v1/datasets \
+  -H 'Origin: https://medical-images-currator.vercel.app' \
+  -H 'Access-Control-Request-Method: GET' \
+  -H 'Access-Control-Request-Headers: authorization,content-type'
+```
+
+Expect JSON from OpenAPI and a successful preflight with
+`access-control-allow-origin: https://medical-images-currator.vercel.app`.
+`400 Disallowed CORS origin` means the running backend does not allow that origin.
+Include each Preview deployment origin explicitly if you use Vercel Preview URLs.
+A Cloudflare Quick Tunnel URL changes when recreated; update the Vercel API URL
+and redeploy each time, or use a named tunnel with a stable hostname.
+
+References: [Vercel Vite deployment](https://vercel.com/docs/frameworks/frontend/vite),
+[Vercel environment variables](https://vercel.com/docs/environment-variables),
+and [backend deployment instructions](../backend/DEPLOYMENT.md).
+
 ## Projects and files
 
 Administrators see **New project** on `/datasets` and **Add files** inside a project.
@@ -51,6 +107,11 @@ as fast as a thumbnail.
 - **Leaving with unsaved edits.** Any in-app link, the previous/next file arrows, and a browser reload ask first, offering save, discard, or keep editing. Nothing is discarded silently.
 - **Files.** `‹` and `›` step through the dataset with an `n/total` indicator, and the dataset page shows each file as a card.
 - **Export.** The current annotation and its label names download from the case page, in the case's own format: NIfTI in, NIfTI out.
+
+COCO supports polygon, uncompressed RLE, and compressed RLE segmentations. Category
+IDs such as `0` or `300` are mapped to viewer labels `1..255` and restored to their
+original IDs on export. Up to 255 categories are supported; COCO editing uses the
+dataset's existing categories. Annotation v0 is preserved.
 
 Decoded slices are cached in the browser (64 of them) and the next eight in the
 direction of travel are prefetched, so wheel scrolling normally issues no request at

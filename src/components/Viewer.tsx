@@ -765,7 +765,9 @@ export function Viewer({
                 <button
                   type="button"
                   className="chip"
-                  disabled={labels.length >= 16}
+                  disabled={
+                    labels.length >= 16 || info.annotation_format === "COCO"
+                  }
                   onClick={() => {
                     const next =
                       Math.max(0, ...labels.map((item) => item.value)) + 1;
