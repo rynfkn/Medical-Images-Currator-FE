@@ -2,6 +2,17 @@
 
 A React + TypeScript workspace for the existing FastAPI backend: a dataset/file browser, a medical image viewer with brush-based segmentation editing, and the review workflow. All frontend source, dependencies, configuration, and build output stay in this directory. The viewer is plain canvas — no imaging library is pulled in.
 
+## Manage projects and labels
+
+On a project page, administrators can use **Delete project** or **Delete data**
+on an individual file card. Both ask for confirmation and permanently remove the
+managed data and associated annotations and reviews.
+
+In the viewer, **Manage labels** opens the label names and delete controls.
+**Save names** persists renamed labels. Deleting a label clears it across every
+slice in your draft; use **Save segmentation** to commit or **Discard** to restore
+it. Saved annotation history remains available.
+
 ## Run locally
 
 Requires Node.js 20.19+ (or 22.12+) and the backend running on port 8000. Set up PostgreSQL, migrate the backend, create a user, and ingest datasets using [the backend instructions](../backend/README.md).

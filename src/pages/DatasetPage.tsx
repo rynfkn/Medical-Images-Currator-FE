@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import { Pagination, PAGE_SIZE } from "../components/Pagination";
 import { StatusBadge } from "../components/StatusBadge";
@@ -18,6 +18,7 @@ function DatasetCases({
   datasetId: string;
   user: User | null;
 }) {
+  const navigate = useNavigate();
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [cases, setCases] = useState<Case[]>([]);
   const [offset, setOffset] = useState(0);
@@ -25,6 +26,41 @@ function DatasetCases({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [message, setMessage] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState("");
+
+  async function remove(item?: Case) {
+    if (!dataset || deleting) return;
+    const description = item
+      ? `Delete “${item.case_uid}” and all its annotations, drafts, and review history?`
+      : `Delete project “${dataset.name}” and all its data, annotations, drafts, and review history?`;
+    if (
+      !window.confirm(
+        `${description}\nThis permanently removes the managed files and cannot be undone.`,
+      )
+    )
+      return;
+    setDeleting(item?.id || datasetId);
+    setDeleteError("");
+    setMessage("");
+    try {
+      await api.delete(item ? `/cases/${item.id}` : `/datasets/${datasetId}`);
+      if (!item) {
+        navigate("/datasets", { replace: true });
+        return;
+      }
+      setMessage(`Deleted ${item.case_uid}.`);
+      if (cases.length === 1 && offset > 0)
+        setOffset(Math.max(0, offset - PAGE_SIZE));
+      else setRetry((value) => value + 1);
+    } catch (cause) {
+      setDeleteError(
+        errorMessage(cause, "Failed to delete. Please try again."),
+      );
+    } finally {
+      setDeleting(null);
+    }
+  }
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
@@ -64,7 +100,21 @@ function DatasetCases({
           </p>
         )}
         {dataset?.description && <p>{dataset.description}</p>}
+        {user?.role === "ADMIN" && dataset && (
+          <button
+            className="danger"
+            disabled={deleting !== null}
+            onClick={() => void remove()}
+          >
+            {deleting === datasetId ? "Deleting…" : "Delete project"}
+          </button>
+        )}
       </div>
+      {deleteError && (
+        <p className="error" role="alert">
+          {deleteError}
+        </p>
+      )}
       {message && (
         <p className="success" role="status">
           {message}
@@ -127,6 +177,16 @@ function DatasetCases({
                         Open →
                       </Link>
                     </div>
+                    {user?.role === "ADMIN" && (
+                      <button
+                        className="danger"
+                        disabled={deleting !== null}
+                        aria-label={`Delete data ${item.case_uid}`}
+                        onClick={() => void remove(item)}
+                      >
+                        {deleting === item.id ? "Deleting…" : "Delete data"}
+                      </button>
+                    )}
                   </article>
                 ))}
               </div>

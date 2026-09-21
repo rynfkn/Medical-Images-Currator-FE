@@ -399,3 +399,104 @@ test("segmentations pair with their image by name", () => {
   ]);
   expect(unmatched.map((file) => file.name)).toEqual(["case_99999.nii.gz"]);
 });
+
+test("admin can rename and delete labels, delete data, and delete a project", async ({
+  page,
+}) => {
+  await page.goto("/login");
+  await page.getByLabel("Username").fill("e2e-admin");
+  await page.getByLabel("Password").fill(fixtures().password);
+  await page.getByRole("button", { name: "Log in", exact: true }).click();
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Deletion workflow");
+  await page.getByRole("button", { name: "Create project" }).click();
+  await page
+    .getByRole("link", { name: "Deletion workflow", exact: true })
+    .click();
+  const projectUrl = page.url();
+  await page.getByRole("button", { name: "Add files", exact: false }).click();
+  await page
+    .getByLabel("Images (.nii/.nii.gz)", { exact: true })
+    .setInputFiles(fixtures().correction);
+  await page
+    .getByLabel("Segmentations", { exact: false })
+    .setInputFiles(fixtures().correction);
+  await page.getByRole("button", { name: /^Upload/ }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Added 1 file" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Open corrected" }).click();
+  await expectViewer(page);
+  await page.getByRole("button", { name: "Manage labels" }).click();
+  await page.getByLabel("Name for label 2", { exact: true }).fill("   ");
+  await expect(page.getByRole("button", { name: "Save names" })).toBeDisabled();
+  await page.getByLabel("Name for label 2", { exact: true }).fill("Kidney");
+  await page.getByRole("button", { name: "Save names" }).click();
+  await expect(
+    page.getByRole("button", { name: "Kidney", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expectViewer(page);
+  await expect(
+    page.getByRole("button", { name: "Kidney", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Manage labels" }).click();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page
+    .getByRole("button", { name: "Delete label 2", exact: true })
+    .click();
+  await expect(page.getByLabel("Name for label 2")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Delete label 2", exact: true })
+    .click();
+  await expect(page.getByLabel("Name for label 2")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Save segmentation", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Discard", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Discard changes" })
+    .click();
+  await expect(page.getByLabel("Name for label 2")).toHaveValue("Kidney");
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Delete label 2", exact: true })
+    .click();
+  await expect(page.getByLabel("Name for label 2")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "Save segmentation", exact: true })
+    .click();
+  await expect(
+    page.getByText("Segmentation saved as version v1.", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expectViewer(page);
+  await expect(
+    page.getByRole("button", { name: "Kidney", exact: true }),
+  ).toHaveCount(0);
+  await page.getByRole("link", { name: "Back to files" }).click();
+  await expect(page).toHaveURL(projectUrl);
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.getByRole("button", { name: "Delete data corrected" }).click();
+  await expect(
+    page.getByRole("link", { name: "Open corrected" }),
+  ).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete data corrected" }).click();
+  await expect(page.getByText("No files found in this dataset.")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page
+    .getByRole("button", { name: "Delete project", exact: true })
+    .click();
+  await expect(page).toHaveURL(projectUrl);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Delete project", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/datasets$/);
+  await expect(
+    page.getByRole("link", { name: "Deletion workflow", exact: true }),
+  ).toHaveCount(0);
+});

@@ -1033,6 +1033,21 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 7px;
 }
+
+button.danger {
+  background: #fff1f2;
+  border: 1px solid #be123c;
+  color: #9f1239;
+}
+
+button.danger:hover:not(:disabled) {
+  background: #ffe4e6;
+}
+
+.file-card > button.danger {
+  margin-top: 0.75rem;
+  align-self: flex-start;
+}
 .label-editor p {
   margin: 0;
 }

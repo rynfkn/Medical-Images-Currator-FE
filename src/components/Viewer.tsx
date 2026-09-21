@@ -3,7 +3,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
-import { errorMessage } from "../api/client";
+import { api, errorMessage } from "../api/client";
 import type { ViewerInfo, ViewerLabel } from "../types/api";
 import {
   cached,
@@ -63,6 +63,9 @@ export function Viewer({
   const [labels, setLabels] = useState<ViewerLabel[]>(info.labels);
   const [label, setLabel] = useState(info.labels[0]?.value ?? 1);
   const [naming, setNaming] = useState(false);
+  const [labelBusy, setLabelBusy] = useState(false);
+  const [labelMessage, setLabelMessage] = useState("");
+  const [labelRevision, setLabelRevision] = useState(0);
   const [opacity, setOpacity] = useState(0.45);
   const [showMask, setShowMask] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -98,6 +101,16 @@ export function Viewer({
   });
 
   const painting = tool !== "pan";
+
+  useEffect(() => {
+    setLabels(info.labels);
+    setLabelMessage("");
+    setLabel((value) =>
+      info.labels.some((item) => item.value === value)
+        ? value
+        : (info.labels[0]?.value ?? 0),
+    );
+  }, [info.labels]);
   const span = Math.max(info.range[1] - info.range[0], 1);
 
   const paint = useCallback(() => {
@@ -183,11 +196,11 @@ export function Viewer({
 
   // Saving or discarding replaces the stored mask, so decoded slices must go.
   useEffect(() => {
-    if (!version) return;
+    if (!version && !labelRevision) return;
     // Clearing closes the cached bitmaps, so stop drawing the old slice first.
     sliceRef.current = null;
     clearSlices(caseId);
-  }, [version, caseId]);
+  }, [version, labelRevision, caseId]);
 
   useEffect(() => () => clearSlices(caseId), [caseId]);
 
@@ -237,7 +250,16 @@ export function Viewer({
       controller.abort();
       clearTimeout(timer);
     };
-  }, [caseId, axis, index, level, width, version, current.count]);
+  }, [
+    caseId,
+    axis,
+    index,
+    level,
+    width,
+    version,
+    labelRevision,
+    current.count,
+  ]);
 
   useEffect(() => {
     viewRef.current.zoom = zoom;
@@ -319,6 +341,12 @@ export function Viewer({
   }
 
   function paintAt(column: number, row: number) {
+    if (
+      labelBusy ||
+      busy ||
+      (tool === "brush" && !labels.some((item) => item.value === label))
+    )
+      return;
     const slice = sliceRef.current;
     if (!slice) return;
     const value = tool === "eraser" ? 0 : label;
@@ -466,6 +494,7 @@ export function Viewer({
   }
 
   function undo() {
+    if (labelBusy || busy) return;
     const slice = sliceRef.current;
     const previous = undoRef.current.pop();
     if (!slice || !previous) return;
@@ -502,11 +531,52 @@ export function Viewer({
   const raster = info.axes.length === 1 && current.count === 1;
 
   async function commitLabels() {
+    setLabelBusy(true);
+    setError("");
+    setLabelMessage("");
     try {
       setLabels(await renameLabels(caseId, labels));
       setNaming(false);
+      setLabelMessage("Label names saved.");
     } catch (cause: unknown) {
       setError(errorMessage(cause, "Failed to save the label names."));
+    } finally {
+      setLabelBusy(false);
+    }
+  }
+
+  async function removeLabel(item: ViewerLabel) {
+    if (
+      !window.confirm(
+        `Delete label “${item.name}” from every slice? Save segmentation to commit this change, or Discard to restore it.`,
+      )
+    )
+      return;
+    setLabelBusy(true);
+    setError("");
+    setLabelMessage("");
+    try {
+      await queueRef.current;
+      // Persist names and newly added labels before asking the server to delete one.
+      await renameLabels(caseId, labels);
+      const { data } = await api.delete<{ labels: ViewerLabel[] }>(
+        `/viewer/cases/${caseId}/labels/${item.value}`,
+      );
+      setLabels(data.labels);
+      if (label === item.value) {
+        setLabel(data.labels[0]?.value ?? 0);
+        setTool("pan");
+      }
+      undoRef.current = [];
+      setLabelRevision((value) => value + 1);
+      onDirty();
+      setLabelMessage(
+        "Label deleted from your draft. Save segmentation to keep the change, or Discard to restore it.",
+      );
+    } catch (cause) {
+      setError(errorMessage(cause, "Failed to delete the label."));
+    } finally {
+      setLabelBusy(false);
     }
   }
 
@@ -587,13 +657,17 @@ export function Viewer({
         <span className="viewer-spacer" />
         {canEdit && (
           <>
-            <button type="button" disabled={!dirty || busy} onClick={onSave}>
+            <button
+              type="button"
+              disabled={!dirty || busy || labelBusy}
+              onClick={onSave}
+            >
               {busy ? "Saving…" : "Save segmentation"}
             </button>
             <button
               className="secondary"
               type="button"
-              disabled={!dirty || busy}
+              disabled={!dirty || busy || labelBusy}
               onClick={onDiscard}
             >
               Discard
@@ -732,14 +806,14 @@ export function Viewer({
                 className="chip"
                 onClick={() => setNaming(!naming)}
               >
-                {naming ? "Close names" : "Rename…"}
+                {naming ? "Close labels" : "Manage labels"}
               </button>
             )}
           </div>
           {canEdit && naming && (
             <div className="label-editor">
               {labels.map((item, position) => (
-                <label key={item.value} className="label-row">
+                <div key={item.value} className="label-row">
                   <span
                     className="swatch"
                     style={{ background: labelColor(item.value) }}
@@ -748,6 +822,7 @@ export function Viewer({
                   <input
                     value={item.name}
                     maxLength={60}
+                    disabled={labelBusy || busy}
                     aria-label={`Name for label ${item.value}`}
                     onChange={(event) =>
                       setLabels(
@@ -759,18 +834,36 @@ export function Viewer({
                       )
                     }
                   />
-                </label>
+                  <button
+                    type="button"
+                    className="danger"
+                    aria-label={`Delete label ${item.value}`}
+                    disabled={
+                      labelBusy ||
+                      busy ||
+                      labels.some((entry) => !entry.name.trim())
+                    }
+                    onClick={() => void removeLabel(item)}
+                  >
+                    Delete
+                  </button>
+                </div>
               ))}
               <div className="chips">
                 <button
                   type="button"
                   className="chip"
                   disabled={
-                    labels.length >= 16 || info.annotation_format === "COCO"
+                    labelBusy ||
+                    busy ||
+                    labels.length >= 255 ||
+                    info.annotation_format === "COCO"
                   }
                   onClick={() => {
                     const next =
-                      Math.max(0, ...labels.map((item) => item.value)) + 1;
+                      Array.from({ length: 255 }, (_, index) => index + 1).find(
+                        (value) => !labels.some((item) => item.value === value),
+                      ) ?? 256;
                     if (next <= 255)
                       setLabels([
                         ...labels,
@@ -783,16 +876,27 @@ export function Viewer({
                 <button
                   type="button"
                   className="chip on"
+                  disabled={
+                    labelBusy ||
+                    busy ||
+                    labels.some((item) => !item.name.trim())
+                  }
                   onClick={() => void commitLabels()}
                 >
                   Save names
                 </button>
               </div>
               <p className="muted small">
-                Names are stored with the case and written next to the saved
-                segmentation as <code>labels.json</code>.
+                Names are saved with the case and included in future
+                segmentation exports. Deleting a label clears it from every
+                slice in your draft.
               </p>
             </div>
+          )}
+          {labelMessage && (
+            <p className="small success" role="status">
+              {labelMessage}
+            </p>
           )}
         </div>
         {!raster && (
