@@ -325,6 +325,14 @@ test("case layout fits a mobile viewport", async ({ page }) => {
   await login(page);
   await page.goto(`/cases/${fixtures().cases.Locked.id}`);
   await expectViewer(page);
+  await expect(
+    page.getByRole("button", { name: "All labels", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Brush label", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Label 1", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Label 1", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,

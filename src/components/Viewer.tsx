@@ -3,6 +3,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
+import { BrushPreview } from "./viewer/brushPreview";
 import { DeleteButton } from "./DeleteButton";
 import { api, errorMessage } from "../api/client";
 import type { ViewerInfo, ViewerLabel } from "../types/api";
@@ -16,6 +17,7 @@ import {
   prefetch,
   renameLabels,
   sendSlice,
+  scratch,
   stamp,
   type SliceData,
 } from "./viewer/slices";
@@ -69,6 +71,7 @@ export function Viewer({
   const [brush, setBrush] = useState(8);
   const [labels, setLabels] = useState<ViewerLabel[]>(info.labels);
   const [label, setLabel] = useState(info.labels[0]?.value ?? 1);
+  const [visibleLabel, setVisibleLabel] = useState<number | null>(null);
   const [naming, setNaming] = useState(false);
   const [labelBusy, setLabelBusy] = useState(false);
   const [labelMessage, setLabelMessage] = useState("");
@@ -83,10 +86,21 @@ export function Viewer({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
   const sliceRef = useRef<SliceData | null>(null);
+  const slicePlaneRef = useRef<{ axis: number; index: number } | null>(null);
   const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 });
   const layoutRef = useRef({ x: 0, y: 0, width: 1, height: 1 });
   const cursorRef = useRef<{ x: number; y: number } | null>(null);
-  const undoRef = useRef<Uint8Array[]>([]);
+  const undoRef = useRef<
+    { labels: Uint8Array; painted: Map<number, number> }[]
+  >([]);
+  const brushPreview = useRef(new BrushPreview(info.shape));
+  const renderedOverlay = useRef<{
+    slice: SliceData;
+    revision: number;
+    visibleLabel: number | null;
+    opacity: number;
+    canvas: HTMLCanvasElement;
+  } | null>(null);
   const queueRef = useRef<Promise<void> | null>(null);
   const pending = useRef(
     new Map<string, { axis: number; index: number; slice: SliceData }>(),
@@ -118,6 +132,11 @@ export function Viewer({
         : (info.labels[0]?.value ?? 0),
     );
   }, [info.labels]);
+  useEffect(() => {
+    setVisibleLabel((value) =>
+      labels.some((item) => item.value === value) ? value : null,
+    );
+  }, [labels]);
   const span = Math.max(info.range[1] - info.range[0], 1);
 
   const paint = useCallback(() => {
@@ -131,7 +150,12 @@ export function Viewer({
     context.fillStyle = "#06090c";
     context.fillRect(0, 0, viewWidth, viewHeight);
     const slice = sliceRef.current;
-    if (!slice) return;
+    if (
+      !slice ||
+      slicePlaneRef.current?.axis !== axis ||
+      slicePlaneRef.current?.index !== index
+    )
+      return;
     const millimetreWidth = slice.columns * current.column_mm;
     const millimetreHeight = slice.rows * current.row_mm;
     const fit = Math.min(
@@ -147,14 +171,40 @@ export function Viewer({
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
     context.drawImage(slice.image, x, y, drawWidth, drawHeight);
-    if (showMask) {
-      // Labels are categories, not intensities: blending them invents classes.
-      context.imageSmoothingEnabled = false;
-      context.globalAlpha = opacity;
-      context.drawImage(slice.overlay, x, y, drawWidth, drawHeight);
-      context.globalAlpha = 1;
-      context.imageSmoothingEnabled = true;
+    const maskOpacity = showMask ? opacity : 0;
+    let rendered = renderedOverlay.current;
+    if (
+      !rendered ||
+      rendered.slice !== slice ||
+      rendered.revision !== brushPreview.current.revision ||
+      rendered.visibleLabel !== visibleLabel ||
+      rendered.opacity !== maskOpacity
+    ) {
+      const painted = brushPreview.current.plane(axis, index);
+      // Update stale cached planes too, so later strokes preserve earlier edits.
+      for (const [pixel, value] of painted) slice.labels[pixel] = value;
+      const overlay = rendered?.canvas || scratch(slice.columns, slice.rows);
+      if (overlay.width !== slice.columns) overlay.width = slice.columns;
+      if (overlay.height !== slice.rows) overlay.height = slice.rows;
+      colorize(overlay, slice.labels, undefined, {
+        visibleLabel,
+        opacity: maskOpacity,
+        painted,
+      });
+      rendered = {
+        slice,
+        revision: brushPreview.current.revision,
+        visibleLabel,
+        opacity: maskOpacity,
+        canvas: overlay,
+      };
+      renderedOverlay.current = rendered;
     }
+    // Category colours must stay crisp. Alpha is assigned separately to stored
+    // segmentation and recent brush marks, rather than fading the entire layer.
+    context.imageSmoothingEnabled = false;
+    context.drawImage(rendered.canvas, x, y, drawWidth, drawHeight);
+    context.imageSmoothingEnabled = true;
     const cursor = cursorRef.current;
     if (painting && cursor) {
       context.beginPath();
@@ -169,7 +219,18 @@ export function Viewer({
       context.lineWidth = 1.5;
       context.stroke();
     }
-  }, [current, showMask, opacity, painting, brush, tool, label]);
+  }, [
+    current,
+    axis,
+    index,
+    visibleLabel,
+    showMask,
+    opacity,
+    painting,
+    brush,
+    tool,
+    label,
+  ]);
 
   const draw = useCallback(() => {
     try {
@@ -201,6 +262,11 @@ export function Viewer({
     draw();
   }, [draw, tick]);
 
+  useEffect(() => {
+    brushPreview.current.clear();
+    renderedOverlay.current = null;
+  }, [version]);
+
   // Saving or discarding replaces the stored mask, so decoded slices must go.
   useEffect(() => {
     if (!version && !labelRevision) return;
@@ -231,6 +297,7 @@ export function Viewer({
           .then((slice) => {
             if (controller.signal.aborted) return;
             sliceRef.current = slice;
+            slicePlaneRef.current = { axis, index };
             undoRef.current = [];
             setTick((value) => value + 1);
             prefetch(
@@ -336,7 +403,13 @@ export function Viewer({
   function pixelAt(clientX: number, clientY: number) {
     const canvas = canvasRef.current;
     const slice = sliceRef.current;
-    if (!canvas || !slice) return null;
+    if (
+      !canvas ||
+      !slice ||
+      slicePlaneRef.current?.axis !== axis ||
+      slicePlaneRef.current?.index !== index
+    )
+      return null;
     const rect = canvas.getBoundingClientRect();
     const { x, y, width: drawWidth, height: drawHeight } = layoutRef.current;
     return {
@@ -370,7 +443,9 @@ export function Viewer({
     } else points.push({ x: column, y: row });
     let changed = false;
     for (const point of points) {
-      const box = stamp(slice, point.x, point.y, brush, value);
+      const box = stamp(slice, point.x, point.y, brush, value, (pixel, value) =>
+        brushPreview.current.set(axis, index, pixel, value),
+      );
       if (box) {
         colorize(slice.overlay, slice.labels, box);
         changed = true;
@@ -422,7 +497,10 @@ export function Viewer({
     if (slice) {
       undoRef.current = [
         ...undoRef.current.slice(-UNDO_DEPTH + 1),
-        slice.labels.slice(),
+        {
+          labels: slice.labels.slice(),
+          painted: brushPreview.current.plane(axis, index),
+        },
       ];
       strokeRef.current = null;
       paintAt(position.column, position.row);
@@ -505,7 +583,10 @@ export function Viewer({
     const slice = sliceRef.current;
     const previous = undoRef.current.pop();
     if (!slice || !previous) return;
-    slice.labels.set(previous);
+    slice.labels.set(previous.labels);
+    brushPreview.current.restore(axis, index, previous.painted);
+    // Other cached planes may contain the stroke being undone.
+    clearSlices(caseId);
     colorize(slice.overlay, slice.labels);
     draw();
     flush();
@@ -570,6 +651,7 @@ export function Viewer({
         `/viewer/cases/${caseId}/labels/${item.value}`,
       );
       setLabels(data.labels);
+      brushPreview.current.removeLabel(item.value);
       if (label === item.value) {
         setLabel(data.labels[0]?.value ?? 0);
         setTool("pan");
@@ -760,18 +842,40 @@ export function Viewer({
           </div>
         </label>
         {canEdit && (
-          <label className="control">
-            <span>
-              Brush size <strong>{brush} px</strong>
-            </span>
-            <input
-              type="range"
-              min={1}
-              max={60}
-              value={brush}
-              onChange={(event) => setBrush(Number(event.target.value))}
-            />
-          </label>
+          <div className="control">
+            <label className="control">
+              <span>Brush label</span>
+              <select
+                aria-label="Brush label"
+                value={label}
+                disabled={busy || labelBusy || !labels.length}
+                onChange={(event) => {
+                  const value = Number(event.target.value);
+                  setLabel(value);
+                  // Keep the painting target visible when a single label is isolated.
+                  if (visibleLabel !== null) setVisibleLabel(value);
+                }}
+              >
+                {labels.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="control">
+              <span>
+                Brush size <strong>{brush} px</strong>
+              </span>
+              <input
+                type="range"
+                min={1}
+                max={60}
+                value={brush}
+                onChange={(event) => setBrush(Number(event.target.value))}
+              />
+            </label>
+          </div>
         )}
         <label className="control">
           <span>
@@ -795,26 +899,38 @@ export function Viewer({
             >
               {showMask ? "Visible" : "Hidden"}
             </button>
-            {canEdit &&
-              labels.map((item) => (
-                <button
-                  key={item.value}
-                  type="button"
-                  className={`chip ${label === item.value && tool !== "eraser" ? "on" : ""}`}
-                  style={{ borderColor: labelColor(item.value) }}
-                  onClick={() => {
-                    setLabel(item.value);
-                    setTool("brush");
-                  }}
-                  title={`Label value ${item.value}`}
-                >
-                  <span
-                    className="swatch"
-                    style={{ background: labelColor(item.value) }}
-                  />
-                  {item.name}
-                </button>
-              ))}
+            <button
+              type="button"
+              className={`chip ${visibleLabel === null ? "on" : ""}`}
+              aria-pressed={visibleLabel === null}
+              onClick={() => {
+                setVisibleLabel(null);
+                setShowMask(true);
+              }}
+            >
+              All labels
+            </button>
+            {labels.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                className={`chip ${visibleLabel === item.value ? "on" : ""}`}
+                aria-pressed={visibleLabel === item.value}
+                style={{ borderColor: labelColor(item.value) }}
+                onClick={() => {
+                  setVisibleLabel(item.value);
+                  setShowMask(true);
+                  setLabel(item.value);
+                }}
+                title={`Label value ${item.value}`}
+              >
+                <span
+                  className="swatch"
+                  style={{ background: labelColor(item.value) }}
+                />
+                {item.name}
+              </button>
+            ))}
             {canEdit && (
               <button
                 type="button"
@@ -976,7 +1092,8 @@ export function Viewer({
       <p className="muted small viewer-hint">
         Scroll to move through slices, Ctrl+scroll or pinch to zoom, drag with
         the right mouse button to window, middle button or Navigate to pan.
-        {canEdit && " Brush and eraser paint directly on the segmentation."}
+        {canEdit &&
+          " Brush marks stay visible at 0% overlay until Save or Discard. Select a label to isolate it, or All labels to show every label."}
       </p>
     </section>
   );

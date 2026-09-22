@@ -53,6 +53,11 @@ export function colorize(
   overlay: HTMLCanvasElement,
   labels: Uint8Array,
   box?: { x: number; y: number; width: number; height: number },
+  options: {
+    visibleLabel?: number | null;
+    opacity?: number;
+    painted?: Map<number, number>;
+  } = {},
 ): void {
   const ctx = context(overlay);
   const area = box || {
@@ -65,9 +70,13 @@ export function colorize(
   const image = ctx.createImageData(area.width, area.height);
   for (let row = 0; row < area.height; row++) {
     for (let column = 0; column < area.width; column++) {
-      const value = labels[(area.y + row) * overlay.width + area.x + column];
+      const pixel = (area.y + row) * overlay.width + area.x + column;
+      const value = labels[pixel];
       const offset = (row * area.width + column) * 4;
-      if (!value) {
+      if (
+        !value ||
+        (options.visibleLabel != null && value !== options.visibleLabel)
+      ) {
         image.data[offset + 3] = 0;
         continue;
       }
@@ -75,7 +84,11 @@ export function colorize(
       image.data[offset] = red;
       image.data[offset + 1] = green;
       image.data[offset + 2] = blue;
-      image.data[offset + 3] = 255;
+      const opacity = options.opacity ?? 1;
+      // Recent brush marks remain legible even when the stored overlay is hidden.
+      image.data[offset + 3] = Math.round(
+        255 * (options.painted?.has(pixel) ? 0.75 : opacity),
+      );
     }
   }
   ctx.putImageData(image, area.x, area.y);
@@ -221,6 +234,7 @@ export function stamp(
   centerY: number,
   radius: number,
   value: number,
+  onPaint?: (offset: number, value: number) => boolean,
 ): { x: number; y: number; width: number; height: number } | null {
   const left = Math.max(0, Math.floor(centerX - radius));
   const right = Math.min(slice.columns - 1, Math.ceil(centerX + radius));
@@ -234,6 +248,8 @@ export function stamp(
       const dy = y + 0.5 - centerY;
       if (dx * dx + dy * dy > radius * radius) continue;
       const offset = y * slice.columns + x;
+      // Painting over an existing label still produces visible brush feedback.
+      if (onPaint?.(offset, value)) changed = true;
       if (slice.labels[offset] === value) continue;
       slice.labels[offset] = value;
       changed = true;

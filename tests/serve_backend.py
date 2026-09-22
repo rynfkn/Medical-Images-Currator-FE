@@ -89,6 +89,7 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
             ("Needs correction", "NIFTI"),
             ("Rejected", "NIFTI"),
             ("Locked", "NIFTI"),
+            ("Label visibility", "NIFTI"),
             ("PNG", "COCO"),
             ("JPEG", "COCO"),
             ("DICOM", "DICOM"),
@@ -97,12 +98,17 @@ with tempfile.TemporaryDirectory(prefix="curator-frontend-e2e-") as temporary:
             if kind == "NIFTI":
                 (source / "images").mkdir(parents=True)
                 (source / "labels").mkdir()
+                shape = (64, 64, 6) if name == "Label visibility" else (4, 5, 6)
+                mask = np.zeros(shape, dtype=np.int16)
+                if name == "Label visibility":
+                    mask[12:24, 20:40, :] = 1
+                    mask[40:52, 20:40, :] = 2
                 nib.save(
-                    nib.Nifti1Image(np.zeros((4, 5, 6), dtype=np.int16), np.eye(4)),
+                    nib.Nifti1Image(np.zeros(shape, dtype=np.int16), np.eye(4)),
                     source / "images/case_0001.nii.gz",
                 )
                 nib.save(
-                    nib.Nifti1Image(np.zeros((4, 5, 6), dtype=np.int16), np.eye(4)),
+                    nib.Nifti1Image(mask, np.eye(4)),
                     source / "labels/case_0001.nii.gz",
                 )
                 formats = ("3D", "NIFTI", "NIFTI")
