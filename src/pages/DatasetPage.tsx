@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, errorMessage } from "../api/client";
 import { Pagination, PAGE_SIZE } from "../components/Pagination";
+import { DeleteButton } from "../components/DeleteButton";
 import { StatusBadge } from "../components/StatusBadge";
 import { UploadFilesForm } from "../components/ProjectForms";
 import type { Case, Dataset, User } from "../types/api";
@@ -26,39 +27,28 @@ function DatasetCases({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [message, setMessage] = useState("");
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
-  async function remove(item?: Case) {
+  async function remove() {
     if (!dataset || deleting) return;
-    const description = item
-      ? `Delete “${item.case_uid}” and all its annotations, drafts, and review history?`
-      : `Delete project “${dataset.name}” and all its data, annotations, drafts, and review history?`;
     if (
       !window.confirm(
-        `${description}\nThis permanently removes the managed files and cannot be undone.`,
+        `Delete project “${dataset.name}” and all its data, annotations, drafts, and review history?\nThis permanently removes the managed files and cannot be undone.`,
       )
     )
       return;
-    setDeleting(item?.id || datasetId);
+    setDeleting(true);
     setDeleteError("");
-    setMessage("");
     try {
-      await api.delete(item ? `/cases/${item.id}` : `/datasets/${datasetId}`);
-      if (!item) {
-        navigate("/datasets", { replace: true });
-        return;
-      }
-      setMessage(`Deleted ${item.case_uid}.`);
-      if (cases.length === 1 && offset > 0)
-        setOffset(Math.max(0, offset - PAGE_SIZE));
-      else setRetry((value) => value + 1);
+      await api.delete(`/datasets/${datasetId}`);
+      navigate("/datasets", { replace: true });
     } catch (cause) {
       setDeleteError(
-        errorMessage(cause, "Failed to delete. Please try again."),
+        errorMessage(cause, "Failed to delete the project. Please try again."),
       );
     } finally {
-      setDeleting(null);
+      setDeleting(false);
     }
   }
   useEffect(() => {
@@ -90,24 +80,25 @@ function DatasetCases({
       <Link className="back-link" to="/datasets">
         ← All projects
       </Link>
-      <div className="page-heading">
-        <p className="eyebrow">Project</p>
-        <h1>{dataset?.name || "Dataset"}</h1>
-        {dataset && (
-          <p className="muted">
-            {dataset.dimension} · {dataset.image_format} ·{" "}
-            {dataset.annotation_format} annotations
-          </p>
-        )}
-        {dataset?.description && <p>{dataset.description}</p>}
+      <div className="page-heading project-heading">
+        <div>
+          <p className="eyebrow">Project</p>
+          <h1>{dataset?.name || "Dataset"}</h1>
+          {dataset && (
+            <p className="muted">
+              {dataset.dimension} · {dataset.image_format} ·{" "}
+              {dataset.annotation_format} annotations
+            </p>
+          )}
+          {dataset?.description && <p>{dataset.description}</p>}
+        </div>
         {user?.role === "ADMIN" && dataset && (
-          <button
-            className="danger"
-            disabled={deleting !== null}
+          <DeleteButton
+            label="Delete project"
+            disabled={deleting}
+            busy={deleting}
             onClick={() => void remove()}
-          >
-            {deleting === datasetId ? "Deleting…" : "Delete project"}
-          </button>
+          />
         )}
       </div>
       {deleteError && (
@@ -177,16 +168,6 @@ function DatasetCases({
                         Open →
                       </Link>
                     </div>
-                    {user?.role === "ADMIN" && (
-                      <button
-                        className="danger"
-                        disabled={deleting !== null}
-                        aria-label={`Delete data ${item.case_uid}`}
-                        onClick={() => void remove(item)}
-                      >
-                        {deleting === item.id ? "Deleting…" : "Delete data"}
-                      </button>
-                    )}
                   </article>
                 ))}
               </div>

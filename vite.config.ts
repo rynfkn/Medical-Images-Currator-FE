@@ -7,7 +7,7 @@ export default defineConfig(({ mode, command }) => {
   if (command === "build" && env.VERCEL === "1") {
     let valid = false;
     try {
-      const url = new URL(env.VITE_API_BASE_URL?.trim());
+      const url = new URL(env.API_BASE_URL?.trim());
       valid =
         url.protocol === "https:" &&
         url.pathname.replace(/\/+$/, "") === "/api/v1" &&
@@ -20,7 +20,7 @@ export default defineConfig(({ mode, command }) => {
     }
     if (!valid)
       throw new Error(
-        "Set VITE_API_BASE_URL=https://YOUR-PUBLIC-BACKEND/api/v1 in Vercel and redeploy. API_PROXY_TARGET only works with Vite dev/preview.",
+        "Set API_BASE_URL=https://YOUR-PUBLIC-BACKEND/api/v1 in Vercel and redeploy. API_PROXY_TARGET only works with Vite dev/preview.",
       );
   }
   const proxy = {
@@ -29,5 +29,15 @@ export default defineConfig(({ mode, command }) => {
       changeOrigin: true,
     },
   };
-  return { plugins: [react()], server: { proxy }, preview: { proxy } };
+  return {
+    plugins: [react()],
+    // Explicitly expose only this public setting, not all deployment variables.
+    define: {
+      "import.meta.env.API_BASE_URL": JSON.stringify(
+        env.API_BASE_URL?.trim() || "/api/v1",
+      ),
+    },
+    server: { proxy },
+    preview: { proxy },
+  };
 });

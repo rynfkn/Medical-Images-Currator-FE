@@ -4,9 +4,10 @@ A React + TypeScript workspace for the existing FastAPI backend: a dataset/file 
 
 ## Manage projects and labels
 
-On a project page, administrators can use **Delete project** or **Delete data**
-on an individual file card. Both ask for confirmation and permanently remove the
-managed data and associated annotations and reviews.
+Administrators can delete a project using the trash icon at the right of its
+page heading. Individual data can only be deleted from the trash icon in the
+image viewer toolbar. Both icons have accessible labels and tooltips, ask for
+confirmation, and permanently remove managed data, annotations, drafts, and reviews.
 
 In the viewer, **Manage labels** opens the label names and delete controls.
 **Save names** persists renamed labels. Deleting a label clears it across every
@@ -28,7 +29,7 @@ npm run dev
 
 Open `http://localhost:5173`. Sign in with a user created in the backend; the application has no built-in credentials or mock datasets.
 
-Vite proxies `/api` to `http://localhost:8000`. Change `API_PROXY_TARGET` in `.env.local` if the backend runs elsewhere. For a directly accessed remote backend, set `VITE_API_BASE_URL=https://your-api.example/api/v1` and allow your frontend origin in the backend's `CORS_ORIGINS`. Restart Vite after changing environment variables.
+Vite proxies `/api` to `http://localhost:8000`. Change `API_PROXY_TARGET` in `.env.local` if the backend runs elsewhere. For a directly accessed remote backend, set `API_BASE_URL=https://your-api.example/api/v1` and allow your frontend origin in the backend's `CORS_ORIGINS`. Restart Vite after changing environment variables.
 
 ```bash
 npm run build
@@ -45,11 +46,12 @@ build command to `npm run build`, and output directory to `dist`. In **Settings 
 Environment Variables**, set this for each environment you deploy (Production or Preview):
 
 ```dotenv
-VITE_API_BASE_URL=https://YOUR-PUBLIC-BACKEND/api/v1
+API_BASE_URL=https://YOUR-PUBLIC-BACKEND/api/v1
 ```
 
 Use your backend's public HTTPS domain, including `/api/v1`, then **redeploy**.
-Vite embeds this value during the build. `API_PROXY_TARGET` only works in local
+Vite explicitly reads `API_BASE_URL` and embeds only this public setting during the
+build; no `VITE_` prefix is required. Changing the value requires a new deployment. `API_PROXY_TARGET` only works in local
 development/preview; Vercel does not run that proxy. The supplied `vercel.json`
 serves the SPA, so `/api/v1` on the Vercel domain returns HTML instead of API JSON.
 Vercel builds now reject a missing, relative, or non-HTTPS API URL.
@@ -82,6 +84,10 @@ curl -i -X OPTIONS https://YOUR-PUBLIC-BACKEND/api/v1/datasets \
   -H 'Access-Control-Request-Method: GET' \
   -H 'Access-Control-Request-Headers: authorization,content-type'
 ```
+
+The backend CORS method list must include `DELETE` for the browser to delete
+projects, cases, and labels. Deploy the updated backend as well as the frontend;
+manual API tools do not enforce browser CORS preflight.
 
 Expect JSON from OpenAPI and a successful preflight with
 `access-control-allow-origin: https://medical-images-currator.vercel.app`.

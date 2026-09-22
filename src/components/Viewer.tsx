@@ -3,6 +3,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
 } from "react";
+import { DeleteButton } from "./DeleteButton";
 import { api, errorMessage } from "../api/client";
 import type { ViewerInfo, ViewerLabel } from "../types/api";
 import {
@@ -39,6 +40,9 @@ export function Viewer({
   onDirty,
   onSave,
   onDiscard,
+  onDelete,
+  deleteLabel,
+  deleting,
 }: {
   caseId: string;
   info: ViewerInfo;
@@ -49,6 +53,9 @@ export function Viewer({
   onDirty: () => void;
   onSave: () => void;
   onDiscard: () => void;
+  onDelete?: () => void;
+  deleteLabel: string;
+  deleting: boolean;
 }) {
   const [axis, setAxis] = useState(info.axes[0].index);
   const current = useMemo(
@@ -674,6 +681,14 @@ export function Viewer({
             </button>
           </>
         )}
+        {onDelete && (
+          <DeleteButton
+            label={deleteLabel}
+            disabled={busy || labelBusy}
+            busy={deleting}
+            onClick={onDelete}
+          />
+        )}
       </div>
 
       <div
@@ -834,19 +849,15 @@ export function Viewer({
                       )
                     }
                   />
-                  <button
-                    type="button"
-                    className="danger"
-                    aria-label={`Delete label ${item.value}`}
+                  <DeleteButton
+                    label={`Delete label ${item.value}`}
                     disabled={
                       labelBusy ||
                       busy ||
                       labels.some((entry) => !entry.name.trim())
                     }
                     onClick={() => void removeLabel(item)}
-                  >
-                    Delete
-                  </button>
+                  />
                 </div>
               ))}
               <div className="chips">

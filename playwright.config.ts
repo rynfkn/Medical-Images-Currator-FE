@@ -21,7 +21,7 @@ export default defineConfig({
       url: "http://127.0.0.1:15173",
       env: {
         API_PROXY_TARGET: "http://127.0.0.1:18081",
-        VITE_API_BASE_URL: "/api/v1",
+        API_BASE_URL: "http://127.0.0.1:18081/api/v1",
       },
     },
   ],

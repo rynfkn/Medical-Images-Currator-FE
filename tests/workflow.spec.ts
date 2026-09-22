@@ -66,8 +66,17 @@ test("authentication, navigation, draft reuse, approval and logout", async ({
   await page
     .getByRole("link", { name: "Approved test dataset", exact: true })
     .click();
+  await expect(
+    page.getByRole("button", { name: "Delete project", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Delete data/ })).toHaveCount(
+    0,
+  );
   await page.getByRole("link", { name: "Open case_0001" }).click();
   await expectViewer(page);
+  await expect(page.getByRole("button", { name: /^Delete data/ })).toHaveCount(
+    0,
+  );
   await page.getByLabel("Comment (optional)").fill("Annotation is valid.");
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.getByRole("status")).toContainText("Draft saved.");
@@ -478,14 +487,48 @@ test("admin can rename and delete labels, delete data, and delete a project", as
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Back to files" }).click();
   await expect(page).toHaveURL(projectUrl);
+  await expect(page.getByRole("button", { name: /^Delete data/ })).toHaveCount(
+    0,
+  );
+  await page.getByRole("link", { name: "Open corrected" }).click();
+  await expectViewer(page);
+  const deleteData = page
+    .locator(".viewer-bar")
+    .getByRole("button", { name: "Delete data corrected" });
+  await expect(deleteData).toHaveText("");
+  await expect(deleteData.locator("svg")).toBeVisible();
   page.once("dialog", (dialog) => dialog.dismiss());
-  await page.getByRole("button", { name: "Delete data corrected" }).click();
-  await expect(
-    page.getByRole("link", { name: "Open corrected" }),
-  ).toBeVisible();
+  await deleteData.click();
+  await expectViewer(page);
+  // A failed deletion must leave the viewer usable and allow a retry.
+  await page.route("**/api/v1/cases/*", async (route) => {
+    if (route.request().method() === "DELETE")
+      await route.fulfill({
+        status: 409,
+        json: { detail: "Deletion temporarily unavailable" },
+      });
+    else await route.continue();
+  });
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Delete data corrected" }).click();
+  await deleteData.click();
+  await expect(page.getByRole("alert")).toContainText(
+    "Deletion temporarily unavailable",
+  );
+  await expect(deleteData).toBeEnabled();
+  await page.unroute("**/api/v1/cases/*");
+  page.once("dialog", (dialog) => dialog.accept());
+  const deletion = page.waitForResponse(
+    (response) =>
+      response.request().method() === "DELETE" &&
+      response.url().includes("/api/v1/cases/"),
+  );
+  await deleteData.click();
+  expect((await deletion).status()).toBe(204);
+  await expect(page).toHaveURL(projectUrl);
   await expect(page.getByText("No files found in this dataset.")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Delete project", exact: true }),
+  ).toHaveText("");
   page.once("dialog", (dialog) => dialog.dismiss());
   await page
     .getByRole("button", { name: "Delete project", exact: true })

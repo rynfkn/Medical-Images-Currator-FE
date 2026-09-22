@@ -7,6 +7,7 @@ import { CaseFiles } from "../components/CaseFiles";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { ReviewPanel } from "../components/ReviewPanel";
 import { StatusBadge } from "../components/StatusBadge";
+import { clearSlices } from "../components/viewer/slices";
 import { Viewer } from "../components/Viewer";
 import type {
   Annotation,
@@ -122,7 +123,7 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
   const [decision, setDecision] = useState<Decision>("APPROVED");
   const [comment, setComment] = useState("");
   const [operation, setOperation] = useState<
-    "upload" | "save" | "submit" | "mask" | "discard" | null
+    "upload" | "save" | "submit" | "mask" | "discard" | "delete" | null
   >(null);
   const draft = data?.reviews.find((review) => !review.submitted_at);
   const ownDraft = draft?.reviewer_id === user.id;
@@ -204,6 +205,32 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
       window.removeEventListener("beforeunload", onUnload);
     };
   }, [dirty, location.pathname]);
+
+  async function deleteCase() {
+    if (!data || busy || user.role !== "ADMIN") return;
+    if (
+      !window.confirm(
+        `Delete “${data.item.case_uid}” and all its annotations, drafts, and review history?\nThis includes unsaved segmentation changes and permanently removes the managed files. It cannot be undone.`,
+      )
+    )
+      return;
+    setOperation("delete");
+    setError("");
+    setMessage("");
+    try {
+      await api.delete(`/cases/${caseId}`);
+      indexes.delete(data.item.dataset_id);
+      clearSlices(caseId);
+      setDirty(false);
+      navigate(`/datasets/${data.item.dataset_id}`, { replace: true });
+    } catch (cause) {
+      setError(
+        errorMessage(cause, "Failed to delete the data. Please try again."),
+      );
+    } finally {
+      setOperation(null);
+    }
+  }
 
   async function refreshViewer() {
     const { data: info } = await api.get<ViewerInfo>(`/viewer/cases/${caseId}`);
@@ -457,6 +484,11 @@ function CaseWorkspace({ caseId, user }: { caseId: string; user: User }) {
                 caseId={caseId}
                 info={viewer}
                 canEdit={canEdit}
+                deleteLabel={`Delete data ${item.case_uid}`}
+                deleting={operation === "delete"}
+                onDelete={
+                  user.role === "ADMIN" ? () => void deleteCase() : undefined
+                }
                 dirty={dirty}
                 busy={busy}
                 version={viewerVersion}
